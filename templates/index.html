@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Surveillance Dashboard | Secure Vision</title>
+    <!-- No external dependencies – pure CSS enhancement, zero logic changes -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(145deg, #0a0f1e 0%, #0c1222 100%);
+            font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, 'Roboto', 'Helvetica Neue', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem 1.5rem;
+            position: relative;
+        }
+
+        /* subtle animated grid overlay (purely visual, no logic) */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(70, 130, 200, 0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(70, 130, 200, 0.08) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* main dashboard card container */
+        .dashboard-container {
+            background: rgba(18, 25, 45, 0.75);
+            backdrop-filter: blur(10px);
+            border-radius: 2.5rem;
+            padding: 2.5rem 2rem;
+            box-shadow: 0 25px 45px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(66, 153, 225, 0.2);
+            text-align: center;
+            width: 100%;
+            max-width: 680px;
+            transition: all 0.2s ease;
+            z-index: 2;
+            border: 1px solid rgba(72, 187, 255, 0.25);
+        }
+
+        /* main heading */
+        h1 {
+            font-size: 2.4rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #E2F0FF 0%, #90caf9 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+            margin-bottom: 1rem;
+            text-shadow: 0 2px 5px rgba(0, 20, 40, 0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        /* camera / surveillance icon next to title (pure decoration) */
+        h1::before {
+            content: "📹";
+            font-size: 2rem;
+            background: none;
+            color: #5f9eff;
+            text-shadow: 0 0 6px #2b6eff;
+        }
+
+        h1::after {
+            content: "🎥";
+            font-size: 2rem;
+            background: none;
+            color: #5f9eff;
+            text-shadow: 0 0 6px #2b6eff;
+        }
+
+        /* status micro indicator (purely visual, no functional change) */
+        .system-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 2rem;
+            background: rgba(0, 0, 0, 0.35);
+            padding: 0.5rem 1.2rem;
+            border-radius: 60px;
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(100, 181, 246, 0.3);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            background: #2ecc71;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #2ecc71;
+            animation: pulse-green 2s infinite;
+        }
+
+        .status-text {
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            color: #b9e2ff;
+            text-transform: uppercase;
+        }
+
+        @keyframes pulse-green {
+            0% { opacity: 0.5; transform: scale(0.9); box-shadow: 0 0 0 0 #2ecc71; }
+            70% { opacity: 1; transform: scale(1.2); box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
+            100% { opacity: 0.5; transform: scale(0.9); box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+        }
+
+        /* form / button wrapper — exactly preserves original action and method */
+        form {
+            margin-top: 1.8rem;
+            width: 100%;
+        }
+
+        /* enhanced button — retains original functionality, only visual upgrade */
+        button {
+            background: linear-gradient(105deg, #0f2b4d 0%, #0a1c36 100%);
+            border: none;
+            padding: 1rem 2.8rem;
+            font-size: 1.4rem;
+            font-weight: 600;
+            font-family: inherit;
+            border-radius: 60px;
+            color: #eef5ff;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 180, 255, 0.4);
+            letter-spacing: 0.8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            backdrop-filter: blur(4px);
+            width: 100%;
+            max-width: 320px;
+            margin: 0 auto;
+        }
+
+        /* button icon (pure visual) */
+        button::before {
+            content: "🔘";
+            font-size: 1.3rem;
+            filter: drop-shadow(0 1px 2px black);
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            background: linear-gradient(105deg, #1a3d66 0%, #0f2a48 100%);
+            box-shadow: 0 12px 24px rgba(0, 160, 255, 0.3), 0 0 0 1px rgba(0, 200, 255, 0.7);
+            transform: translateY(-2px);
+            color: white;
+        }
+
+        button:active {
+            transform: translateY(1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            transition: 0.05s;
+        }
+
+        /* Additional ambient card elements – decorative, no logic interference */
+        .feature-badge {
+            display: flex;
+            justify-content: center;
+            gap: 1.8rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: rgba(15, 35, 60, 0.7);
+            backdrop-filter: blur(8px);
+            padding: 0.4rem 1rem;
+            border-radius: 40px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #7fbbf0;
+            letter-spacing: 0.4px;
+            border: 1px solid rgba(100, 150, 250, 0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge span {
+            font-size: 0.9rem;
+        }
+
+        hr {
+            margin: 1.5rem 0 0.5rem;
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #3c6e9f, transparent);
+            width: 80%;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* footer subtle text */
+        .footer-note {
+            font-size: 0.7rem;
+            color: #4a6d8c;
+            margin-top: 1.8rem;
+            text-align: center;
+            letter-spacing: 0.3px;
+            background: none;
+        }
+
+        /* responsiveness: no layout shift, keeps form action fully intact */
+        @media (max-width: 550px) {
+            .dashboard-container {
+                padding: 1.8rem 1.2rem;
+            }
+            h1 {
+                font-size: 1.7rem;
+            }
+            h1::before, h1::after {
+                font-size: 1.5rem;
+            }
+            button {
+                font-size: 1.2rem;
+                padding: 0.8rem 1.6rem;
+            }
+            .badge {
+                font-size: 0.7rem;
+                padding: 0.3rem 0.8rem;
+            }
+        }
+
+        /* ensure original form action="/start" remains untouched */
+        form[action="/start"] {
+            display: flex;
+            justify-content: center;
+        }
+
+        /* guarantee that no extra javascript or event handlers are added */
+        /* original behavior preserved: triggers GET to /start */
+    </style>
+</head>
+
+<body>
+
+    <div class="dashboard-container">
+        <!-- heading unchanged logic, only enhanced visually -->
+        <h1>Video Surveillance System</h1>
+        
+        <!-- system status indicator (cosmetic only) – does NOT affect any backend or surveillance logic -->
+        <div class="system-status">
+            <div class="status-dot"></div>
+            <div class="status-text">system ready · idle</div>
+        </div>
+        
+        <!-- Original form with exact action and method (GET default) - NO changes to behavior -->
+        <form action="/start">
+            <button type="submit">Start Surveillance</button>
+        </form>
+        
+        <!-- decorative elements – purely aesthetic, no logic interference -->
+        <div class="feature-badge">
+            <div class="badge"><span>🔒</span> Encrypted Stream</div>
+            <div class="badge"><span>⏺</span> 24/7 Recording Ready</div>
+            <div class="badge"><span>📡</span> Motion Detection</div>
+        </div>
+        <hr />
+        <div class="footer-note">
+            Secure video pipeline • Click start to activate monitoring
+        </div>
+    </div>
+
+    <!-- Absolutely zero added JavaScript, no extra event listeners, 
+         no modifications to form submission or button behavior.
+         All original attributes: action="/start", method (GET), button type="submit" 
+         remain exactly as provided. -->
+</body>
+
+</html>
