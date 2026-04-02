@@ -1,207 +1,316 @@
 import cv2
 import os
-import sqlite3
 import numpy as np
 from ultralytics import YOLO
 from scipy.spatial.distance import cosine
 from scipy.optimize import linear_sum_assignment
 import torch
-import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import threading
+import torchreid
 
-yolo_lock = threading.Lock()
+# ==============================
+# GLOBALS
+# ==============================
 latest_frame_cam1 = None
 latest_frame_cam2 = None
-pipeline_done = False
-
-print("\nStarting Surveillance Pipeline\n")
-
-# --------------------------------------------------
-# Base path (IMPORTANT for Flask)
-# --------------------------------------------------
+pipeline_done     = False
+pipeline_running  = False   # NEW: True only while actively processing
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# --------------------------------------------------
-# Create required folders
-# --------------------------------------------------
+os.makedirs(os.path.join(BASE, "static/outputs"), exist_ok=True)
+os.makedirs(os.path.join(BASE, "static/extracted/cam1"), exist_ok=True)
+os.makedirs(os.path.join(BASE, "static/extracted/cam2"), exist_ok=True)
 
-os.makedirs(os.path.join(BASE,"static/outputs"), exist_ok=True)
-os.makedirs(os.path.join(BASE,"static/extracted/cam1"), exist_ok=True)
-os.makedirs(os.path.join(BASE,"static/extracted/cam2"), exist_ok=True)
+# ==============================
+# REAL-TIME LIVE COUNTS
+# ==============================
+counts_lock = threading.Lock()
+live_counts = {
+    "cam1_active": 0,
+    "cam1_total":  0,
+    "cam2_active": 0,
+    "cam2_total":  0,
+    "matches":     0,
+    "unique":      0,
+    "cam1_done":   False,
+    "cam2_done":   False,
+}
 
-# --------------------------------------------------
-# Load YOLO
-# --------------------------------------------------
+# ==============================
+# SHARED CROSS-CAM FEATURE STORES
+# ==============================
+cross_cam_lock     = threading.Lock()
+cam1_feature_store = {}   # { display_id: feature_vector }
+cam2_feature_store = {}
+matched_pairs      = set()
 
-detector = YOLO("yolov8n.pt")
+CROSS_CAM_THRESHOLD = 0.4
 
-# --------------------------------------------------
-# Feature extractor
-# --------------------------------------------------
 
-model = models.resnet50(pretrained=True)
-model = torch.nn.Sequential(*(list(model.children())[:-1]))
-model.eval()
+# ==============================
+# RESET — called before each new pipeline run
+# ==============================
+def reset_pipeline():
+    """Clears all state so the pipeline can be started fresh."""
+    global latest_frame_cam1, latest_frame_cam2, pipeline_done, pipeline_running
+
+    latest_frame_cam1 = None
+    latest_frame_cam2 = None
+    pipeline_done     = False
+    pipeline_running  = False
+
+    with counts_lock:
+        live_counts.update({
+            "cam1_active": 0,
+            "cam1_total":  0,
+            "cam2_active": 0,
+            "cam2_total":  0,
+            "matches":     0,
+            "unique":      0,
+            "cam1_done":   False,
+            "cam2_done":   False,
+        })
+
+    with cross_cam_lock:
+        cam1_feature_store.clear()
+        cam2_feature_store.clear()
+        matched_pairs.clear()
+
+
+# ==============================
+# LIVE CROSS-CAM MATCHING
+# ==============================
+def _recompute_live_unique():
+    """
+    Must be called inside cross_cam_lock + counts_lock.
+    Uses Hungarian algorithm over current feature stores and updates live_counts.
+    """
+    f1_items = list(cam1_feature_store.items())
+    f2_items = list(cam2_feature_store.items())
+
+    if not f1_items or not f2_items:
+        live_counts["matches"] = 0
+        live_counts["unique"]  = (live_counts["cam1_total"] +
+                                  live_counts["cam2_total"])
+        return
+
+    feats1 = [x[1] for x in f1_items]
+    feats2 = [x[1] for x in f2_items]
+
+    dist_matrix = np.zeros((len(feats1), len(feats2)))
+    for i, f1 in enumerate(feats1):
+        for j, f2 in enumerate(feats2):
+            dist_matrix[i, j] = cosine(f1, f2)
+
+    rows, cols = linear_sum_assignment(dist_matrix)
+
+    matches = sum(
+        1 for r, c in zip(rows, cols)
+        if dist_matrix[r][c] < CROSS_CAM_THRESHOLD
+    )
+
+    live_counts["matches"] = matches
+    live_counts["unique"]  = max(
+        0,
+        live_counts["cam1_total"] + live_counts["cam2_total"] - matches
+    )
+
+    print(f"[CROSS-CAM LIVE] Cam1: {live_counts['cam1_total']} | "
+          f"Cam2: {live_counts['cam2_total']} | "
+          f"Matches: {matches} | "
+          f"Unique: {live_counts['unique']}")
+
+
+# ==============================
+# REID MODEL (OSNet)
+# ==============================
+print("Loading ReID model...")
+reid_model = torchreid.models.build_model(
+    name='osnet_x1_0',
+    num_classes=1000,
+    pretrained=True
+)
+reid_model.eval()
 
 transform = transforms.Compose([
-    transforms.Resize((256,128)),
-    transforms.ToTensor()
+    transforms.Resize((256, 128)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
 ])
 
+feature_lock = threading.Lock()
+
+
 def extract_feature(img):
-
-    img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = Image.fromarray(img)
     img = transform(img).unsqueeze(0)
-
     with torch.no_grad():
-        f = model(img)
+        feat = reid_model(img)
+    feat = feat.cpu().numpy().flatten()
+    return feat / np.linalg.norm(feat)
 
-    return f.numpy().flatten()
 
-def cluster_features(raw_data_list, threshold=0.15):
-    if not raw_data_list: return []
-    unique_clusters = []
-    
-    import numpy as np
-    from scipy.spatial.distance import cosine
-    
-    for item in raw_data_list:
-        f = item['feature']
+# ==============================
+# CLUSTERING
+# ==============================
+def cluster_features(data, threshold=0.25):
+    clusters = []
+    for item in data:
         matched = False
-        for i, cluster in enumerate(unique_clusters):
-            uf = cluster['feature']
-            dist = cosine(f, uf)
-            if dist < threshold:
-                # Keep the largest crop image as the representative
-                if item['area'] > cluster['area']:
-                    unique_clusters[i]['crop'] = item['crop']
-                    unique_clusters[i]['area'] = item['area']
-                
-                # Merge feature representations mathematically
-                merged = (uf + f) / 2.0
-                norm = np.linalg.norm(merged)
-                unique_clusters[i]['feature'] = merged / norm if norm > 0 else merged
+        for c in clusters:
+            if cosine(item['feature'], c['feature']) < threshold:
                 matched = True
                 break
         if not matched:
-            norm = np.linalg.norm(f)
-            item['feature'] = f / norm if norm > 0 else f
-            unique_clusters.append(item)
-            
-    return unique_clusters
+            clusters.append(item)
+    return clusters
 
-# --------------------------------------------------
-# Camera processing
-# --------------------------------------------------
 
-def process_camera(video_path, cam, tracker):
+# ==============================
+# CAMERA PROCESSING
+# ==============================
+REID_THRESHOLD = 0.25
 
+
+def process_camera(video_path, cam, tracker, detector):
     global latest_frame_cam1, latest_frame_cam2
 
-    print(f"\nProcessing {cam} video:", video_path)
-
     cap = cv2.VideoCapture(video_path)
+    width  = int(cap.get(3))
+    height = int(cap.get(4))
+    fps    = int(cap.get(5))
 
-    if not cap.isOpened():
-        print("Error opening video:", video_path)
-        return [], 0
+    out = cv2.VideoWriter(
+        os.path.join(BASE, f"static/outputs/{cam}.mp4"),
+        cv2.VideoWriter_fourcc(*'mp4v'),
+        max(1, fps // 3),
+        (width, height)
+    )
 
-    persons = []
-    seen_ids = set()
-    best_crops = {}
-
-    id_mapping = {}
-    next_id = 1
-
-    frame_no = 0
-
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    process_fps = max(1, int(fps / 3))
-
-    # video output
-    out_path = os.path.join(BASE,f"static/outputs/{cam}.mp4")
-
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(out_path,fourcc,process_fps,(width,height))
+    id_mapping     = {}   # DeepSort track_id → display_id
+    next_id        = 1
+    track_features = {}   # display_id → feature (within-cam ReID)
+    seen_ids       = set()
 
     while True:
-
         ret, frame = cap.read()
-
         if not ret:
             break
 
-        frame_no += 1
-
-        if frame_no % 3 != 0:
-            continue
-            
-        with yolo_lock:
-            # Lower confidence to catch difficult-to-detect people
-            results = detector(frame, classes=[0], conf=0.35, verbose=False)
+        results = detector(frame, classes=[0], conf=0.5, iou=0.5, verbose=False)
 
         detections = []
-
         for r in results:
-
-            boxes = r.boxes.xyxy.cpu().numpy()
-            classes = r.boxes.cls.cpu().numpy()
+            boxes  = r.boxes.xyxy.cpu().numpy()
             scores = r.boxes.conf.cpu().numpy()
+            for box, score in zip(boxes, scores):
+                x1, y1, x2, y2 = map(int, box)
+                w, h = x2 - x1, y2 - y1
+                if w < 30 or h < 60:
+                    continue
+                detections.append(([x1, y1, w, h], float(score), 'person'))
 
-            for box, cls, score in zip(boxes, classes, scores):
-
-                if int(cls) == 0:
-
-                    x1,y1,x2,y2 = map(int,box)
-
-                    w = x2-x1
-                    h = y2-y1
-
-                    detections.append(([x1,y1,w,h],score,'person'))
-
-        tracks = tracker.update_tracks(detections,frame=frame)
+        tracks     = tracker.update_tracks(detections, frame=frame)
+        active_ids = set()
 
         for track in tracks:
-
-            if not track.is_confirmed() or track.time_since_update > 2:
+            if not track.is_confirmed() or track.time_since_update > 1:
                 continue
 
-            track_id = track.track_id
-            
-            if track_id not in id_mapping:
-                id_mapping[track_id] = next_id
-                next_id += 1
-            
-            display_id = id_mapping[track_id]
-
-            l,t,r,b = map(int,track.to_ltrb())
-            
-            l = max(0, l)
-            t = max(0, t)
-            r = min(width, r)
-            b = min(height, b)
-
-            cv2.rectangle(frame,(l,t),(r,b),(0,255,0),2)
-
-            cv2.putText(frame,f"ID {display_id}",(l,t-10),
-                        cv2.FONT_HERSHEY_SIMPLEX,0.6,(0,255,0),2)
-
-            seen_ids.add(display_id)
-
-            crop = frame[t:b,l:r]
-
-            if crop.size == 0 or track.time_since_update > 0:
+            ds_id      = track.track_id
+            l, t, r, b = map(int, track.to_ltrb())
+            crop       = frame[t:b, l:r]
+            if crop.size == 0:
                 continue
-                
-            area = (r - l) * (b - t)
-            if display_id not in best_crops or area > best_crops[display_id]['area']:
-                best_crops[display_id] = {'area': area, 'crop': crop.copy()}
+
+            # ── Within-camera ReID ─────────────────────────────────────────
+            if ds_id not in id_mapping:
+                with feature_lock:
+                    feat = extract_feature(crop)
+
+                best_match = None
+                best_dist  = REID_THRESHOLD
+
+                for did, f in track_features.items():
+                    dist = cosine(feat, f)
+                    if dist < best_dist:
+                        best_dist  = dist
+                        best_match = did
+
+                if best_match is not None:
+                    id_mapping[ds_id] = best_match
+                    # Running average keeps features fresh
+                    updated = track_features[best_match] * 0.7 + feat * 0.3
+                    track_features[best_match] = updated / np.linalg.norm(updated)
+                else:
+                    id_mapping[ds_id] = next_id
+                    next_id += 1
+
+                track_features[id_mapping[ds_id]] = feat
+
+            display_id = id_mapping[ds_id]
+            active_ids.add(display_id)
+
+            # ── New person → update counts + trigger live cross-cam match ──
+            if display_id not in seen_ids:
+                seen_ids.add(display_id)
+
+                # 1. Update this camera's total instantly
+                with counts_lock:
+                    live_counts[f"{cam}_total"] = len(seen_ids)
+
+                # 2. Write feature to shared cross-cam store
+                with cross_cam_lock:
+                    if cam == "cam1":
+                        cam1_feature_store[display_id] = track_features[display_id]
+                    else:
+                        cam2_feature_store[display_id] = track_features[display_id]
+
+                    # 3. Re-run live Hungarian matching immediately
+                    with counts_lock:
+                        _recompute_live_unique()
+
+            # ── Update active count every frame ────────────────────────────
+            with counts_lock:
+                live_counts[f"{cam}_active"] = len(active_ids)
+
+            # Draw bounding box + ID
+            cv2.rectangle(frame, (l, t), (r, b), (0, 255, 0), 2)
+            cv2.putText(frame, f"ID {display_id}", (l, t - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # ── HUD overlay ───────────────────────────────────────────────────
+        with counts_lock:
+            c1a = live_counts["cam1_active"]
+            c2a = live_counts["cam2_active"]
+            c1t = live_counts["cam1_total"]
+            c2t = live_counts["cam2_total"]
+            mtc = live_counts["matches"]
+            unq = live_counts["unique"]
+
+        hud = (
+            [
+                f"[CAM1] Active: {c1a}  Total: {c1t}",
+                f"[CAM2] Active: {c2a}  Total: {c2t}",
+                f"Matches: {mtc}  |  Unique: {unq}",
+            ]
+            if cam == "cam1" else
+            [
+                f"[CAM2] Active: {c2a}  Total: {c2t}",
+                f"[CAM1] Active: {c1a}  Total: {c1t}",
+                f"Matches: {mtc}  |  Unique: {unq}",
+            ]
+        )
+
+        for i, line in enumerate(hud):
+            cv2.putText(frame, line, (10, 30 + i * 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
 
         if cam == "cam1":
             latest_frame_cam1 = frame.copy()
@@ -213,121 +322,61 @@ def process_camera(video_path, cam, tracker):
     cap.release()
     out.release()
 
-    raw_data = []
+    with counts_lock:
+        live_counts[f"{cam}_done"] = True
 
-    for display_id, data in best_crops.items():
-        crop = data['crop']
-        feature = extract_feature(crop)
-        raw_data.append({'feature': feature, 'crop': crop, 'id': display_id, 'area': data['area']})
+    return list(track_features.values()), len(seen_ids)
 
-    return raw_data, len(seen_ids)
 
+# ==============================
+# MAIN PIPELINE
+# ==============================
 def run_pipeline():
-    global pipeline_done
-    
-    # --------------------------------------------------
-    # Reset tracking and DB
-    # --------------------------------------------------
-    db_path = os.path.join(BASE,"database.db")
-    try:
-        if os.path.exists(db_path):
-            os.remove(db_path)
-    except PermissionError:
-        pass
+    global pipeline_done, pipeline_running
 
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
+    pipeline_running = True
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS stats(
-    cam1 INTEGER,
-    cam2 INTEGER,
-    unique_people INTEGER,
-    matches INTEGER
+    detector1 = YOLO("yolov8s.pt")
+    detector2 = YOLO("yolov8s.pt")
+
+    tracker_cfg = dict(
+        max_age=120,
+        n_init=5,
+        max_cosine_distance=0.2,
+        nn_budget=500
     )
-    """)
-    cur.execute("DELETE FROM stats")
-    
-    for cam_dir in ["cam1", "cam2"]:
-        dir_path = os.path.join(BASE, f"static/extracted/{cam_dir}")
-        if os.path.exists(dir_path):    
-            for f in os.listdir(dir_path):
-                os.remove(os.path.join(dir_path, f))
-        else:
-            os.makedirs(dir_path, exist_ok=True)
-            
-    tracker1 = DeepSort(max_age=100, n_init=3, max_cosine_distance=0.5, max_iou_distance=0.9, nn_budget=200)
-    tracker2 = DeepSort(max_age=100, n_init=3, max_cosine_distance=0.5, max_iou_distance=0.9, nn_budget=200)
 
-    # --------------------------------------------------
-    # Input videos
-    # --------------------------------------------------
-    cam1_video = os.path.join(BASE,"inputs","cam1.mp4")
-    cam2_video = os.path.join(BASE,"inputs","cam2.mp4")
+    tracker1 = DeepSort(**tracker_cfg)
+    tracker2 = DeepSort(**tracker_cfg)
 
-    # --------------------------------------------------
-    # Run cameras
-    # --------------------------------------------------
-    cam1_raw_features, cam1_raw_count = process_camera(cam1_video, "cam1", tracker1)
-    cam2_raw_features, cam2_raw_count = process_camera(cam2_video, "cam2", tracker2)
+    cam1_path = os.path.join(BASE, "inputs/cam1.mp4")
+    cam2_path = os.path.join(BASE, "inputs/cam2.mp4")
 
-    # --------------------------------------------------
-    # Intra-camera Clustering for Re-ID Compression
-    # --------------------------------------------------
-    cam1_clusters = cluster_features(cam1_raw_features, threshold=0.20)
-    cam2_clusters = cluster_features(cam2_raw_features, threshold=0.20)
+    result = {}
 
-    cam1_count = len(cam1_clusters)
-    cam2_count = len(cam2_clusters)
-    
-    # Save the strictly clustered, deduplicated images
-    cam1_features = []
-    for final_id, item in enumerate(cam1_clusters, 1):
-        path = os.path.join(BASE, f"static/extracted/cam1/{final_id}.jpg")
-        cv2.imwrite(path, item['crop'])
-        cam1_features.append(item['feature'])
+    def cam1():
+        result['cam1'] = process_camera(cam1_path, "cam1", tracker1, detector1)
 
-    cam2_features = []
-    for final_id, item in enumerate(cam2_clusters, 1):
-        path = os.path.join(BASE, f"static/extracted/cam2/{final_id}.jpg")
-        cv2.imwrite(path, item['crop'])
-        cam2_features.append(item['feature'])
+    def cam2():
+        result['cam2'] = process_camera(cam2_path, "cam2", tracker2, detector2)
 
-    print(f"\nExtraction & Intra-Camera Clustering completed.")
-    print(f"Cam1 Unique True Persons: {cam1_count} (raw tracker IDs: {cam1_raw_count})")
-    print(f"Cam2 Unique True Persons: {cam2_count} (raw tracker IDs: {cam2_raw_count})")
+    t1 = threading.Thread(target=cam1)
+    t2 = threading.Thread(target=cam2)
+    t1.start(); t2.start()
+    t1.join();  t2.join()
 
-    # --------------------------------------------------
-    # Matching
-    # --------------------------------------------------
-    matches = 0
+    # Final definitive cross-cam match after both cameras finish
+    with cross_cam_lock:
+        with counts_lock:
+            _recompute_live_unique()
+            final_matches = live_counts["matches"]
+            final_unique  = live_counts["unique"]
 
-    if len(cam1_features) > 0 and len(cam2_features) > 0:
-        distance_matrix = np.ones((len(cam1_features), len(cam2_features)))
-        
-        for i, f1 in enumerate(cam1_features):
-            for j, f2 in enumerate(cam2_features):
-                distance_matrix[i, j] = cosine(f1, f2)
-                
-        row_ind, col_ind = linear_sum_assignment(distance_matrix)
-        
-        for i, j in zip(row_ind, col_ind):
-            if distance_matrix[i, j] < 0.4:
-                matches += 1
+    print("\n===== FINAL STATS =====")
+    print(f"Cam1 Total : {live_counts['cam1_total']}")
+    print(f"Cam2 Total : {live_counts['cam2_total']}")
+    print(f"Matches    : {final_matches}")
+    print(f"Unique     : {final_unique}")
 
-    unique_people = cam1_count + cam2_count - matches
-
-    print("Matches:",matches)
-    print("Unique people:",unique_people)
-
-    # --------------------------------------------------
-    # Save stats
-    # --------------------------------------------------
-    cur.execute("INSERT INTO stats VALUES (?,?,?,?)",
-                (cam1_count,cam2_count,unique_people,matches))
-
-    conn.commit()
-    conn.close()
-
-    print("\nPipeline Completed\n")
-    pipeline_done = True
+    pipeline_running = False
+    pipeline_done    = True
