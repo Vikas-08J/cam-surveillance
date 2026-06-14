@@ -8,3 +8,22 @@ __pycache__/
 .env
 .DS_Store
 *.log
+# Dataset
+reid-data/
+
+# Logs
+log/
+
+# Model files
+*.pt
+*.pth
+*.onnx
+
+# Images and videos
+*.jpg
+*.jpeg
+*.png
+*.mp4
+
+# Python files
+__pycache__/

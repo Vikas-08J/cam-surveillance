@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ABC Mall – Live Monitoring System</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060e1a;--panel:#0a1422;--border:#1a2a3a;
+  --green:#00ff88;--green2:#00cc66;--red:#ff3355;
+  --amber:#ffaa00;--blue:#00aaff;--text:#c8dde8;
+  --mono:'Courier New',monospace;
+}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,136,0.01) 2px,rgba(0,255,136,0.01) 4px);pointer-events:none;z-index:9999}
+
+/* TOPBAR */
+.topbar{background:var(--panel);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;z-index:100}
+.top-left{display:flex;align-items:center;gap:14px}
+.logo-ring{width:30px;height:30px;border:2px solid var(--green);border-radius:50%;display:grid;place-items:center;animation:pulse-ring 2.5s infinite}
+@keyframes pulse-ring{0%,100%{box-shadow:0 0 0 0 rgba(0,255,136,0.4)}50%{box-shadow:0 0 0 8px rgba(0,255,136,0)}}
+.logo-ring svg{width:13px;height:13px;fill:var(--green)}
+.top-title{font-size:13px;font-weight:700;letter-spacing:0.15em;color:var(--green);text-transform:uppercase;font-family:var(--mono)}
+.top-right{display:flex;align-items:center;gap:12px;font-family:var(--mono);font-size:11px}
+#clock{color:var(--green2);letter-spacing:0.1em}
+.badge{padding:3px 10px;border-radius:2px;font-size:10px;letter-spacing:0.12em;font-weight:700;font-family:var(--mono)}
+.badge-idle{background:#1a1a1a;color:#555;border:1px solid #333}
+.badge-live{background:var(--red);color:#fff;animation:blink 1.2s step-end infinite}
+.badge-done{background:var(--green);color:#000}
+@keyframes blink{50%{opacity:0.3}}
+#start-btn{display:flex;align-items:center;gap:8px;padding:7px 18px;background:transparent;border:2px solid var(--green);border-radius:3px;color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:0.15em;cursor:pointer;transition:background 0.2s,color 0.2s,box-shadow 0.2s;text-transform:uppercase}
+#start-btn:hover:not(:disabled){background:var(--green);color:#000;box-shadow:0 0 14px rgba(0,255,136,0.4)}
+#start-btn:disabled{border-color:#333;color:#444;cursor:not-allowed}
+#start-btn.running .btn-icon{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* SHELL */
+.shell{display:flex;flex:1;overflow:hidden}
+
+/* SIDEBAR */
+.sidebar{width:212px;min-width:212px;background:#080f1a;border-right:1px solid var(--border);display:flex;flex-direction:column}
+.brand{padding:14px 16px;border-bottom:1px solid var(--border)}
+.brand-title{font-size:11px;font-weight:700;color:var(--green);letter-spacing:0.08em;font-family:var(--mono)}
+.brand-sub{font-size:10px;color:#334;margin-top:3px;font-family:var(--mono)}
+.nav{flex:1;padding:6px 0;overflow-y:auto}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;border-left:2px solid transparent;transition:all 0.15s;font-size:12px;color:#556;user-select:none;font-family:var(--mono);letter-spacing:0.03em}
+.nav-item:hover{background:#0d1828;color:#8ab}
+.nav-item.active{background:#0d1828;color:var(--green);border-left-color:var(--green)}
+.nav-icon{width:16px;text-align:center;font-size:12px;flex-shrink:0}
+.nav-badge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;border-radius:10px;padding:1px 6px;font-weight:700;display:none}
+.nav-badge.show{display:inline}
+.progress-wrap{height:2px;background:#0d1520}
+.progress-bar{height:100%;width:0%;background:var(--green);transition:width 0.4s ease;box-shadow:0 0 6px var(--green)}
+.sidebar-log{padding:10px 14px;border-top:1px solid var(--border);font-size:9px;color:#334;font-family:var(--mono);line-height:1.5;min-height:52px}
+#log-text{color:#557;word-break:break-all}
+
+/* CONTENT */
+.content{flex:1;overflow-y:auto;background:var(--bg)}
+.panel{display:none;padding:20px;min-height:100%}
+.panel.active{display:block}
+.panel-header{margin-bottom:18px}
+.panel-title{font-size:14px;font-weight:700;color:var(--green);letter-spacing:0.1em;font-family:var(--mono);text-transform:uppercase}
+.panel-sub{font-size:11px;color:#446;margin-top:4px;font-family:var(--mono)}
+
+/* OVERCROWD BANNER */
+.oc-banner{display:none;align-items:center;gap:10px;background:rgba(255,51,85,0.1);border:1px solid rgba(255,51,85,0.45);border-radius:6px;padding:10px 14px;margin-bottom:16px}
+.oc-banner.on{display:flex;animation:oc-pulse 1.2s ease-in-out infinite}
+@keyframes oc-pulse{0%,100%{border-color:rgba(255,51,85,0.45)}50%{border-color:rgba(255,51,85,0.9)}}
+.oc-icon{font-size:18px;flex-shrink:0}
+.oc-title{font-family:var(--mono);font-size:11px;color:var(--red);font-weight:700;letter-spacing:0.06em}
+.oc-sub{font-family:var(--mono);font-size:10px;color:#c87;margin-top:3px}
+
+/* METRIC GRID */
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px}
+.metric{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px}
+.metric-label{font-size:9px;color:#446;margin-bottom:5px;letter-spacing:0.08em;font-family:var(--mono);text-transform:uppercase}
+.metric-value{font-size:26px;font-weight:700;color:var(--green);font-family:var(--mono);transition:color 0.3s}
+.metric-value.red{color:var(--red)}
+.metric-value.updated{animation:flash 0.4s ease}
+@keyframes flash{0%,100%{opacity:1}50%{text-shadow:0 0 12px currentColor}}
+.metric-sub{font-size:10px;color:#334;margin-top:3px;font-family:var(--mono)}
+
+/* CAM FEED */
+.cam-feed{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px}
+.cam-feed-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.cam-label{font-size:11px;font-weight:700;color:var(--green);letter-spacing:0.08em;font-family:var(--mono)}
+.cam-live{display:flex;align-items:center;gap:6px;font-size:10px;font-family:var(--mono)}
+.cam-live.online{color:var(--green)}.cam-live.offline{color:#444}
+.live-dot{width:7px;height:7px;border-radius:50%}
+.live-dot.online{background:var(--green);box-shadow:0 0 5px var(--green);animation:pdot 1.5s infinite}
+.live-dot.offline{background:#333}
+@keyframes pdot{0%,100%{opacity:1}50%{opacity:0.3}}
+.cam-screen-wrap{position:relative;width:100%;padding-top:56.25%;background:#020608;border:1px solid #0d1f2d;border-radius:6px;overflow:hidden;margin-bottom:12px}
+.cam-screen-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+.cam-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-family:var(--mono);color:#223}
+.cam-placeholder .ph-icon{font-size:28px;opacity:0.4}
+.cam-placeholder .ph-text{font-size:10px;letter-spacing:0.1em;opacity:0.4}
+.cam-corner{position:absolute;width:16px;height:16px;border-color:rgba(0,255,136,0.35);border-style:solid;z-index:2}
+.cam-corner.tl{top:8px;left:8px;border-width:2px 0 0 2px}
+.cam-corner.tr{top:8px;right:8px;border-width:2px 2px 0 0}
+.cam-corner.bl{bottom:8px;left:8px;border-width:0 0 2px 2px}
+.cam-corner.br{bottom:8px;right:8px;border-width:0 2px 2px 0}
+.cam-rec{position:absolute;top:10px;right:10px;z-index:3;display:none;align-items:center;gap:5px;font-size:10px;color:rgba(255,80,80,0.9);font-family:var(--mono)}
+.cam-rec.on{display:flex}
+.rec-dot{width:7px;height:7px;border-radius:50%;background:#ef4444;animation:blink 1.2s step-end infinite}
+.oc-tag{display:none;position:absolute;top:10px;left:10px;z-index:4;background:rgba(255,51,85,0.88);color:#fff;font-family:var(--mono);font-size:10px;font-weight:700;padding:3px 8px;border-radius:3px;letter-spacing:0.06em;animation:blink 0.8s step-end infinite}
+.oc-tag.on{display:block}
+.cam-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.cam-stat{text-align:center;background:#060e1a;border:1px solid var(--border);border-radius:5px;padding:9px 6px}
+.cam-stat-val{font-size:20px;font-weight:700;color:var(--green);font-family:var(--mono);transition:color 0.3s}
+.cam-stat-val.red{color:var(--red)}
+.cam-stat-val.updated{animation:flash 0.4s ease}
+.cam-stat-lbl{font-size:9px;color:#334;letter-spacing:0.05em;margin-top:3px;font-family:var(--mono);text-transform:uppercase}
+
+/* DIVIDER / FLOW */
+.divider{height:1px;background:var(--border);margin:16px 0}
+.section-label{font-size:9px;color:#334;margin-bottom:10px;letter-spacing:0.1em;font-family:var(--mono);text-transform:uppercase}
+.flow-row{display:flex;align-items:center;gap:12px;padding:8px 0}
+.flow-label{font-size:11px;color:#556;width:90px;font-family:var(--mono)}
+.flow-bar-wrap{flex:1;height:4px;background:#0d1520;border-radius:2px;overflow:hidden}
+.flow-bar-fill{height:100%;border-radius:2px;transition:width 0.6s ease,background 0.5s ease}
+.flow-val{font-size:11px;font-weight:700;width:60px;text-align:right;font-family:var(--mono);transition:color 0.4s}
+.flow-row.disabled{opacity:0.28;pointer-events:none}
+
+/* MAP */
+.mall-map{width:100%;height:240px;position:relative;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#060e18;margin-bottom:14px}
+.map-grid{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 29px,rgba(0,255,136,0.04) 30px),repeating-linear-gradient(90deg,transparent,transparent 29px,rgba(0,255,136,0.04) 30px);pointer-events:none}
+.mz{position:absolute;border-radius:4px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px;border:1px solid transparent;transition:all 0.35s}
+.mz.clickable{cursor:pointer}
+.mz.clickable:hover{opacity:0.8}
+.mz.nocam{opacity:0.4;cursor:default}
+.mz.oc{animation:mz-flash 0.7s step-end infinite}
+@keyframes mz-flash{0%,100%{border-color:rgba(255,51,85,0.7)}50%{border-color:rgba(255,51,85,0.1)}}
+.mz-name{font-size:10px;font-weight:700;text-align:center;font-family:var(--mono)}
+.mz-status{font-size:9px;text-align:center;font-family:var(--mono)}
+.mz-count{font-size:9px;text-align:center;font-family:var(--mono)}
+
+/* ZONE LIST */
+.zone-list{display:flex;flex-direction:column;gap:8px}
+.zone-row{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border-radius:6px;border-left:3px solid transparent;transition:border-color 0.4s}
+.zone-name{font-size:12px;color:#8ab;flex:1;font-weight:600;font-family:var(--mono)}
+.zone-bar-wrap{width:90px;height:4px;background:#0d1520;border-radius:2px;overflow:hidden}
+.zone-bar{height:100%;border-radius:2px;transition:width 0.6s ease,background 0.5s ease}
+.zone-status{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:700;font-family:var(--mono);transition:all 0.3s;white-space:nowrap}
+
+/* ALERTS */
+.alert-list{display:flex;flex-direction:column;gap:10px}
+.alert-item{padding:14px;border-radius:7px;border:1px solid;animation:slideIn 0.3s ease}
+@keyframes slideIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.al-critical{background:rgba(239,68,68,0.07);border-color:rgba(239,68,68,0.3)}
+.al-warn{background:rgba(249,115,22,0.07);border-color:rgba(249,115,22,0.3)}
+.al-sent{background:rgba(0,170,255,0.07);border-color:rgba(0,170,255,0.3)}
+.al-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.al-title-red{font-size:12px;font-weight:700;color:#ef4444;font-family:var(--mono)}
+.al-title-warn{font-size:12px;font-weight:700;color:#f97316;font-family:var(--mono)}
+.al-title-sent{font-size:12px;font-weight:700;color:#00aaff;font-family:var(--mono)}
+.al-body{font-size:11px;color:#556;padding-left:22px}
+.al-time{font-size:10px;color:#334;padding-left:22px;margin-top:5px;font-family:var(--mono)}
+
+/* ACTIONS */
+.action-list{display:flex;flex-direction:column;gap:10px}
+.action-item{display:flex;align-items:flex-start;gap:14px;padding:14px 16px;background:var(--panel);border-radius:7px;cursor:pointer;border:1px solid var(--border);transition:border-color 0.15s,background 0.2s}
+.action-item:hover{border-color:#2a4060;background:#0d1828}
+.action-item.sent{border-color:rgba(0,170,255,0.35);background:rgba(0,170,255,0.04);cursor:default}
+.action-num{width:24px;height:24px;border-radius:50%;background:#060e1a;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--green);flex-shrink:0;margin-top:1px;font-family:var(--mono);transition:all 0.3s}
+.action-num.sent{color:var(--blue);border-color:var(--blue)}
+.action-text{font-size:12px;color:#acd;font-weight:700;margin-bottom:4px;font-family:var(--mono)}
+.action-desc{font-size:11px;color:#445}
+.action-pri{font-size:9px;padding:2px 7px;border-radius:4px;font-weight:700;margin-left:auto;flex-shrink:0;font-family:var(--mono);white-space:nowrap;transition:all 0.3s}
+.pri-high{background:rgba(239,68,68,0.15);color:#ef4444}
+.pri-med{background:rgba(249,115,22,0.15);color:#f97316}
+.pri-sent{background:rgba(0,170,255,0.15);color:#00aaff}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="top-left">
+    <div class="logo-ring">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm0 2a8 8 0 110 16A8 8 0 0112 4z" fill-opacity=".4"/></svg>
+    </div>
+    <div class="top-title">ABC Mall — Live Monitoring</div>
+  </div>
+  <div class="top-right">
+    <span id="clock">00:00:00</span>
+    <span id="status-badge" class="badge badge-idle">● IDLE</span>
+    <button id="start-btn" onclick="startPipeline()">
+      <span class="btn-icon">▶</span>
+      <span id="start-btn-label">START</span>
+    </button>
+  </div>
+</div>
+
+<div class="shell">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-title">ABC MALL SYS</div>
+      <div class="brand-sub" id="brand-date">Initialising…</div>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active" onclick="show('map',this)">
+        <div class="nav-icon">⬛</div>Map View
+      </div>
+      <div class="nav-item" onclick="show('cam1',this)">
+        <div class="nav-icon">◉</div>Camera 1
+      </div>
+      <div class="nav-item" onclick="show('cam2',this)">
+        <div class="nav-icon">◉</div>Camera 2
+      </div>
+      <div class="nav-item" onclick="show('stats',this)">
+        <div class="nav-icon">≡</div>Live Stats
+      </div>
+      <div class="nav-item" onclick="show('alerts',this)">
+        <div class="nav-icon">⚠</div>Alerts
+        <span class="nav-badge" id="alert-badge">0</span>
+      </div>
+      <div class="nav-item" onclick="show('actions',this)">
+        <div class="nav-icon">▶</div>Suggested Actions
+      </div>
+    </nav>
+    <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+    <div class="sidebar-log"><div id="log-text">System ready — press START to begin.</div></div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- ══════════════════ MAP VIEW ══════════════════ -->
+    <div class="panel active" id="panel-map">
+      <div class="panel-header">
+        <div class="panel-title">Mall Zone Map</div>
+        <div class="panel-sub">Cam 1 → Entrance &nbsp;|&nbsp; Cam 2 → Food Court &nbsp;|&nbsp; Shops & Exit — no camera</div>
+      </div>
+
+      <div class="oc-banner" id="map-oc-banner">
+        <div class="oc-icon">🚨</div>
+        <div>
+          <div class="oc-title" id="map-oc-title">OVERCROWD ALERT</div>
+          <div class="oc-sub" id="map-oc-sub">5+ persons detected in frame</div>
+        </div>
+      </div>
+
+      <div class="mall-map">
+        <div class="map-grid"></div>
+
+        <!-- Entrance (Cam 1) -->
+        <div class="mz clickable" id="mz-entrance"
+             style="left:4%;top:5%;width:28%;height:42%;background:rgba(0,255,136,0.06);border-color:rgba(0,255,136,0.22);"
+             onclick="show('cam1',document.querySelectorAll('.nav-item')[1])">
+          <div class="mz-name" style="color:var(--green)">ENTRANCE</div>
+          <div class="mz-status" id="mz-e-status" style="color:#00cc66">Cam1</div>
+          <div class="mz-count" id="mz-e-count" style="color:#00ff88">Active: 0</div>
+        </div>
+
+        <!-- Food Court (Cam 2) -->
+        <div class="mz clickable" id="mz-food"
+             style="left:35%;top:5%;width:30%;height:58%;background:rgba(0,255,136,0.06);border-color:rgba(0,255,136,0.22);"
+             onclick="show('cam2',document.querySelectorAll('.nav-item')[2])">
+          <div class="mz-name" style="color:var(--green)">FOOD COURT</div>
+          <div class="mz-status" id="mz-f-status" style="color:#00cc66">Cam2</div>
+          <div class="mz-count" id="mz-f-count" style="color:#00ff88">Active: 0</div>
+        </div>
+
+        <!-- Shops — NO CAM -->
+        <div class="mz nocam"
+             style="left:68%;top:5%;width:28%;height:58%;background:rgba(60,60,80,0.07);border-color:rgba(80,80,100,0.2);">
+          <div class="mz-name" style="color:#445">SHOPS AREA</div>
+          <div class="mz-status" style="color:#334;font-size:8px">📷 Not Attached</div>
+        </div>
+
+        <!-- Exit — NO CAM -->
+        <div class="mz nocam"
+             style="left:4%;top:52%;width:28%;height:40%;background:rgba(60,60,80,0.07);border-color:rgba(80,80,100,0.2);">
+          <div class="mz-name" style="color:#445">EXIT ZONE</div>
+          <div class="mz-status" style="color:#334;font-size:8px">📷 Not Attached</div>
+        </div>
+
+        <!-- Info overlay -->
+        <div class="mz" style="left:35%;top:67%;width:58%;height:26%;background:rgba(0,170,255,0.04);border-color:rgba(0,170,255,0.12);pointer-events:none;">
+          <div class="mz-name" style="color:#00aaff;font-size:9px">TOTAL INSIDE</div>
+          <div class="mz-count" style="color:#38bdf8;font-size:9px">
+            Entrance: <span id="map-c1">0</span> &nbsp;|&nbsp; Food Court: <span id="map-c2">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="zone-list">
+        <div class="zone-row" id="zrow-entrance" style="border-left-color:var(--green)">
+          <div class="zone-name">Entrance (Cam 1)</div>
+          <div class="zone-bar-wrap"><div class="zone-bar" id="zbar-entrance" style="width:0%;background:var(--green)"></div></div>
+          <div class="zone-status" id="zstat-entrance" style="background:rgba(0,255,136,0.09);color:var(--green)">IDLE</div>
+        </div>
+        <div class="zone-row" id="zrow-food" style="border-left-color:var(--green)">
+          <div class="zone-name">Food Court (Cam 2)</div>
+          <div class="zone-bar-wrap"><div class="zone-bar" id="zbar-food" style="width:0%;background:var(--green)"></div></div>
+          <div class="zone-status" id="zstat-food" style="background:rgba(0,255,136,0.09);color:var(--green)">IDLE</div>
+        </div>
+        <div class="zone-row" style="border-left-color:#2a3a4a;opacity:0.4">
+          <div class="zone-name">Shops Area</div>
+          <div class="zone-bar-wrap"><div class="zone-bar" style="width:0%;background:#2a3a4a"></div></div>
+          <div class="zone-status" style="background:rgba(60,80,100,0.15);color:#445">NO CAM</div>
+        </div>
+        <div class="zone-row" style="border-left-color:#2a3a4a;opacity:0.4">
+          <div class="zone-name">Exit Zone</div>
+          <div class="zone-bar-wrap"><div class="zone-bar" style="width:0%;background:#2a3a4a"></div></div>
+          <div class="zone-status" style="background:rgba(60,80,100,0.15);color:#445">NO CAM</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════ CAMERA 1 — ENTRANCE ══════════════════ -->
+    <div class="panel" id="panel-cam1">
+      <div class="panel-header">
+        <div class="panel-title">Camera 1 — Entrance</div>
+        <div class="panel-sub">YOLOv8s · DeepSort · OSNet ReID &nbsp;|&nbsp; Zone: Main Entrance</div>
+      </div>
+
+      <div class="oc-banner" id="cam1-oc-banner">
+        <div class="oc-icon">🚨</div>
+        <div>
+          <div class="oc-title">OVERCROWD ALERT — ENTRANCE</div>
+          <div class="oc-sub" id="cam1-oc-sub">5+ persons in current frame</div>
+        </div>
+      </div>
+
+      <div class="cam-feed">
+        <div class="cam-feed-header">
+          <div class="cam-label">LIVE FEED · CAM1 · ENTRANCE</div>
+          <div class="cam-live offline" id="cam1-livebadge">
+            <div class="live-dot offline" id="cam1-dot"></div>
+            <span id="cam1-status">OFFLINE</span>
+          </div>
+        </div>
+        <div class="cam-screen-wrap">
+          <div class="cam-corner tl"></div><div class="cam-corner tr"></div>
+          <div class="cam-corner bl"></div><div class="cam-corner br"></div>
+          <div class="cam-rec" id="cam1-rec"><span class="rec-dot"></span>REC</div>
+          <div class="oc-tag" id="cam1-octag">⚠ OVERCROWD</div>
+          <div class="cam-placeholder" id="cam1-ph">
+            <div class="ph-icon">◉</div>
+            <div class="ph-text">AWAITING STREAM — PRESS START</div>
+          </div>
+          <img id="cam1-img" alt="Camera 1" style="display:none;"/>
+        </div>
+        <div class="cam-stats">
+          <div class="cam-stat"><div class="cam-stat-val" id="c1-active">0</div><div class="cam-stat-lbl">Active IDs</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c1-total">0</div><div class="cam-stat-lbl">Total Tracked</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c1-matches">0</div><div class="cam-stat-lbl">Cross Matches</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c1-unique">0</div><div class="cam-stat-lbl">Unique People</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════ CAMERA 2 — FOOD COURT ══════════════════ -->
+    <div class="panel" id="panel-cam2">
+      <div class="panel-header">
+        <div class="panel-title">Camera 2 — Food Court</div>
+        <div class="panel-sub">YOLOv8s · DeepSort · OSNet ReID &nbsp;|&nbsp; Zone: Food Court</div>
+      </div>
+
+      <div class="oc-banner" id="cam2-oc-banner">
+        <div class="oc-icon">🚨</div>
+        <div>
+          <div class="oc-title">OVERCROWD ALERT — FOOD COURT</div>
+          <div class="oc-sub" id="cam2-oc-sub">5+ persons in current frame</div>
+        </div>
+      </div>
+
+      <div class="cam-feed">
+        <div class="cam-feed-header">
+          <div class="cam-label">LIVE FEED · CAM2 · FOOD COURT</div>
+          <div class="cam-live offline" id="cam2-livebadge">
+            <div class="live-dot offline" id="cam2-dot"></div>
+            <span id="cam2-status">OFFLINE</span>
+          </div>
+        </div>
+        <div class="cam-screen-wrap">
+          <div class="cam-corner tl"></div><div class="cam-corner tr"></div>
+          <div class="cam-corner bl"></div><div class="cam-corner br"></div>
+          <div class="cam-rec" id="cam2-rec"><span class="rec-dot"></span>REC</div>
+          <div class="oc-tag" id="cam2-octag">⚠ OVERCROWD</div>
+          <div class="cam-placeholder" id="cam2-ph">
+            <div class="ph-icon">◉</div>
+            <div class="ph-text">AWAITING STREAM — PRESS START</div>
+          </div>
+          <img id="cam2-img" alt="Camera 2" style="display:none;"/>
+        </div>
+        <div class="cam-stats">
+          <div class="cam-stat"><div class="cam-stat-val" id="c2-active">0</div><div class="cam-stat-lbl">Active IDs</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c2-total">0</div><div class="cam-stat-lbl">Total Tracked</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c2-matches">0</div><div class="cam-stat-lbl">Cross Matches</div></div>
+          <div class="cam-stat"><div class="cam-stat-val" id="c2-unique">0</div><div class="cam-stat-lbl">Unique People</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════ LIVE STATS ══════════════════ -->
+    <div class="panel" id="panel-stats">
+      <div class="panel-header">
+        <div class="panel-title">Live Stats</div>
+        <div class="panel-sub">Hungarian cross-cam matching · Entry flow driven by Cam 1 active count</div>
+      </div>
+
+      <div class="oc-banner" id="stats-oc-banner">
+        <div class="oc-icon">🚨</div>
+        <div>
+          <div class="oc-title">OVERCROWD ALERT ACTIVE</div>
+          <div class="oc-sub" id="stats-oc-sub">5+ persons detected in a single frame</div>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">Unique Visitors</div>
+          <div class="metric-value" id="s-unique">0</div>
+          <div class="metric-sub">cross-cam deduped</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Cross-Cam Matches</div>
+          <div class="metric-value" id="s-matches">0</div>
+          <div class="metric-sub">same person both feeds</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Entrance Total</div>
+          <div class="metric-value" id="s-cam1">0</div>
+          <div class="metric-sub">cam1 · entrance</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Food Court Total</div>
+          <div class="metric-value" id="s-cam2">0</div>
+          <div class="metric-sub">cam2 · food court</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="section-label">Flow Indicators</div>
+
+      <!-- Entry flow — live, driven by Cam1 active -->
+      <div class="flow-row">
+        <div class="flow-label">Entry Flow</div>
+        <div class="flow-bar-wrap"><div class="flow-bar-fill" id="entry-flow-bar" style="width:0%;background:var(--green)"></div></div>
+        <div class="flow-val" id="entry-flow-lbl" style="color:#334">—</div>
+      </div>
+
+      <!-- Exit flow — disabled (no cam on exit zone) -->
+      <div class="flow-row disabled" style="margin-top:4px;border-top:1px solid var(--border);padding-top:8px">
+        <div class="flow-label">Exit Flow</div>
+        <div class="flow-bar-wrap"><div class="flow-bar-fill" style="width:0%;background:#2a3a4a"></div></div>
+        <div class="flow-val" style="color:#2a3a4a">N/A</div>
+      </div>
+      <div style="font-size:9px;color:#2a3a4a;font-family:var(--mono);margin-top:5px">
+        * Exit flow disabled — no camera attached to exit zone
+      </div>
+
+      <div class="divider"></div>
+      <div class="section-label">Camera Breakdown</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:14px">
+          <div style="font-size:10px;color:#334;margin-bottom:8px;font-family:var(--mono)">CAM1 · ENTRANCE</div>
+          <div style="font-size:12px;color:#446;font-family:var(--mono);margin-bottom:4px">Active: <span id="sb-c1a" style="color:var(--green);font-weight:700">0</span></div>
+          <div style="font-size:12px;color:#446;font-family:var(--mono)">Total: <span id="sb-c1t" style="color:var(--green);font-weight:700">0</span></div>
+        </div>
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:14px">
+          <div style="font-size:10px;color:#334;margin-bottom:8px;font-family:var(--mono)">CAM2 · FOOD COURT</div>
+          <div style="font-size:12px;color:#446;font-family:var(--mono);margin-bottom:4px">Active: <span id="sb-c2a" style="color:var(--green);font-weight:700">0</span></div>
+          <div style="font-size:12px;color:#446;font-family:var(--mono)">Total: <span id="sb-c2t" style="color:var(--green);font-weight:700">0</span></div>
+        </div>
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:14px;opacity:0.3">
+          <div style="font-size:10px;color:#334;margin-bottom:6px;font-family:var(--mono)">SHOPS AREA</div>
+          <div style="font-size:11px;color:#334;font-family:var(--mono)">📷 No camera</div>
+        </div>
+        <div style="background:var(--panel);border:1px solid var(--border);border-radius:7px;padding:14px;opacity:0.3">
+          <div style="font-size:10px;color:#334;margin-bottom:6px;font-family:var(--mono)">EXIT ZONE</div>
+          <div style="font-size:11px;color:#334;font-family:var(--mono)">📷 No camera</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════ ALERTS ══════════════════ -->
+    <div class="panel" id="panel-alerts">
+      <div class="panel-header">
+        <div class="panel-title">Alerts</div>
+        <div class="panel-sub" id="alerts-sub">Automatic system alerts + action confirmations with timestamp</div>
+      </div>
+      <div class="alert-list" id="alert-list">
+        <div id="alert-empty" style="text-align:center;padding:50px 20px;font-family:var(--mono);color:#223;font-size:11px;letter-spacing:0.04em;line-height:2">
+          No alerts yet.<br>Overcrowd events and sent actions will appear here.
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════ SUGGESTED ACTIONS ══════════════════ -->
+    <div class="panel" id="panel-actions">
+      <div class="panel-header">
+        <div class="panel-title">Suggested Actions</div>
+        <div class="panel-sub">Click any action to dispatch — confirmation logged in Alerts with date &amp; time</div>
+      </div>
+      <div class="action-list">
+
+        <div class="action-item" id="act-1"
+             onclick="sendAction(1,'Stop Entry Temporarily','Halt new visitor entry at Entrance (Cam1) until crowd density drops below overcrowd threshold.','HIGH')">
+          <div class="action-num" id="anum-1">1</div>
+          <div style="flex:1">
+            <div class="action-text">Stop entry temporarily</div>
+            <div class="action-desc">Halt new visitor entry at Entrance until crowd density drops below threshold.</div>
+          </div>
+          <div class="action-pri pri-high" id="apri-1">HIGH</div>
+        </div>
+
+        <div class="action-item" id="act-2"
+             onclick="sendAction(2,'Redirect Visitors to Exit 2','Route exiting visitors via side exit to relieve Entrance congestion.','HIGH')">
+          <div class="action-num" id="anum-2">2</div>
+          <div style="flex:1">
+            <div class="action-text">Redirect to Exit 2</div>
+            <div class="action-desc">Route exiting visitors through side exit to relieve main entrance congestion.</div>
+          </div>
+          <div class="action-pri pri-high" id="apri-2">HIGH</div>
+        </div>
+
+        <div class="action-item" id="act-3"
+             onclick="sendAction(3,'Deploy Security to Food Court','Send personnel to Food Court (Cam2) to manage overcrowding and ensure visitor safety.','MED')">
+          <div class="action-num" id="anum-3">3</div>
+          <div style="flex:1">
+            <div class="action-text">Deploy security to food court</div>
+            <div class="action-desc">Send personnel to food court to manage overcrowding and ensure visitor safety.</div>
+          </div>
+          <div class="action-pri pri-med" id="apri-3">MED</div>
+        </div>
+
+        <div class="action-item" id="act-4"
+             onclick="sendAction(4,'Control Entry Flow Rate','Throttle incoming traffic at both camera zones to reduce cumulative inside count.','MED')">
+          <div class="action-num" id="anum-4">4</div>
+          <div style="flex:1">
+            <div class="action-text">Control entry flow rate</div>
+            <div class="action-desc">Throttle incoming traffic at both camera entrances to reduce cumulative inside count.</div>
+          </div>
+          <div class="action-pri pri-med" id="apri-4">MED</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /shell -->
+
+<script>
+/* ─────────────────────────────────────────────────
+   CONSTANTS & STATE
+───────────────────────────────────────────────── */
+const OC_THRESHOLD = 5;   // persons in one frame = overcrowd
+
+let alertCount  = 0;
+let uiState     = 'idle';
+let pollTimer   = null;
+let prevStats   = {};
+let ocState     = { cam1: false, cam2: false };
+let ocInjected  = { cam1: false, cam2: false };
+
+/* ─────────────────────────────────────────────────
+   CLOCK
+───────────────────────────────────────────────── */
+function tick() {
+  const n = new Date();
+  document.getElementById('clock').textContent = n.toTimeString().slice(0,8);
+  document.getElementById('brand-date').textContent =
+    n.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})
+    + ' · ' + n.toTimeString().slice(0,5);
+}
+setInterval(tick, 1000); tick();
+
+function nowTs() {
+  const n = new Date();
+  return n.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})
+    + ' · ' + n.toTimeString().slice(0,8);
+}
+
+/* ─────────────────────────────────────────────────
+   SIDEBAR NAV
+───────────────────────────────────────────────── */
+function show(id, el) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  if (el) el.classList.add('active');
+}
+
+/* ─────────────────────────────────────────────────
+   ANIMATED VALUE
+───────────────────────────────────────────────── */
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const s = String(val);
+  if (el.textContent !== s) {
+    el.textContent = s;
+    el.classList.remove('updated');
+    void el.offsetWidth;
+    el.classList.add('updated');
+  }
+}
+function log(msg) { const e = document.getElementById('log-text'); if(e) e.textContent = msg; }
+
+/* ─────────────────────────────────────────────────
+   ALERT INJECTION
+───────────────────────────────────────────────── */
+function injectAlert(type, icon, title, body) {
+  const list = document.getElementById('alert-list');
+  const empty = document.getElementById('alert-empty');
+  if (empty) empty.remove();
+
+  const ts  = nowTs();
+  const cls = { critical:'al-critical', warn:'al-warn', sent:'al-sent' }[type] || 'al-warn';
+  const tcls = { critical:'al-title-red', warn:'al-title-warn', sent:'al-title-sent' }[type] || 'al-title-warn';
+
+  const div = document.createElement('div');
+  div.className = `alert-item ${cls}`;
+  div.innerHTML = `
+    <div class="al-header">
+      <span style="font-size:14px">${icon}</span>
+      <div class="${tcls}">${title}</div>
+    </div>
+    <div class="al-body">${body}</div>
+    <div class="al-time">${ts}</div>`;
+  list.prepend(div);
+
+  alertCount++;
+  const badge = document.getElementById('alert-badge');
+  badge.textContent = alertCount;
+  badge.classList.add('show');
+  document.getElementById('alerts-sub').textContent = `${alertCount} alert(s) — latest: ${ts}`;
+}
+
+/* ─────────────────────────────────────────────────
+   OVERCROWD LOGIC
+───────────────────────────────────────────────── */
+function handleOvercrowd(cam, active) {
+  const isOC  = active >= OC_THRESHOLD;
+  const wasOC = ocState[cam];
+  ocState[cam] = isOC;
+
+  const zone  = cam === 'cam1' ? 'Entrance' : 'Food Court';
+  const detail = `${active} persons detected simultaneously (threshold: ${OC_THRESHOLD})`;
+
+  /* Cam panel banner */
+  const cb = document.getElementById(cam + '-oc-banner');
+  if (cb) cb.classList.toggle('on', isOC);
+  const cs = document.getElementById(cam + '-oc-sub');
+  if (cs && isOC) cs.textContent = detail;
+
+  /* Cam feed overlay tag */
+  const ct = document.getElementById(cam + '-octag');
+  if (ct) ct.classList.toggle('on', isOC);
+
+  /* Active stat color */
+  const av = document.getElementById(cam === 'cam1' ? 'c1-active' : 'c2-active');
+  if (av) av.classList.toggle('red', isOC);
+
+  /* Map banner */
+  const anyOC = ocState.cam1 || ocState.cam2;
+  const mb = document.getElementById('map-oc-banner');
+  mb.classList.toggle('on', anyOC);
+  if (anyOC) {
+    const both = ocState.cam1 && ocState.cam2;
+    document.getElementById('map-oc-title').textContent =
+      'OVERCROWD ALERT — ' + (both ? 'ENTRANCE & FOOD COURT' : zone.toUpperCase());
+    document.getElementById('map-oc-sub').textContent =
+      both ? 'Both zones exceeded 5-person threshold' : detail;
+  }
+
+  /* Stats banner */
+  const sb = document.getElementById('stats-oc-banner');
+  if (sb) sb.classList.toggle('on', anyOC);
+  const ss = document.getElementById('stats-oc-sub');
+  if (ss && anyOC) ss.textContent =
+    (ocState.cam1 && ocState.cam2) ? 'Both Entrance and Food Court exceeded threshold' :
+    ocState.cam1 ? `Entrance (Cam1): ${active} persons` : `Food Court (Cam2): ${active} persons`;
+
+  /* Map zone styling */
+  const mz = document.getElementById(cam === 'cam1' ? 'mz-entrance' : 'mz-food');
+  if (mz) {
+    if (isOC) {
+      mz.style.background    = 'rgba(255,51,85,0.13)';
+      mz.style.borderColor   = 'rgba(255,51,85,0.6)';
+      mz.classList.add('oc');
+    } else {
+      mz.style.background    = 'rgba(0,255,136,0.06)';
+      mz.style.borderColor   = 'rgba(0,255,136,0.22)';
+      mz.classList.remove('oc');
+    }
+  }
+
+  /* Inject alert only on rising edge */
+  if (isOC && !wasOC && !ocInjected[cam]) {
+    ocInjected[cam] = true;
+    injectAlert('critical','🚨',
+      `Overcrowd Detected — ${zone}`,
+      detail + `. Immediate action recommended.`);
+    log(`⚠ OVERCROWD: ${zone} — ${active} persons in frame`);
+  }
+  /* Reset so it can fire again after clearing */
+  if (!isOC && wasOC) ocInjected[cam] = false;
+}
+
+/* ─────────────────────────────────────────────────
+   ZONE BAR + STATUS UPDATE
+───────────────────────────────────────────────── */
+function updateZone(cam, active) {
+  const isC1   = cam === 'cam1';
+  const barId  = isC1 ? 'zbar-entrance' : 'zbar-food';
+  const stId   = isC1 ? 'zstat-entrance' : 'zstat-food';
+  const rowId  = isC1 ? 'zrow-entrance'  : 'zrow-food';
+  const mzSt   = isC1 ? 'mz-e-status'   : 'mz-f-status';
+  const mzCnt  = isC1 ? 'mz-e-count'    : 'mz-f-count';
+
+  const bar  = document.getElementById(barId);
+  const stat = document.getElementById(stId);
+  const row  = document.getElementById(rowId);
+  const ms   = document.getElementById(mzSt);
+  const mc   = document.getElementById(mzCnt);
+
+  if (mc) mc.textContent = `Active: ${active}`;
+
+  const pct = Math.min(100, active * 10);
+
+  let col, label, bg;
+  if (active === 0)                   { col='var(--green)'; label='IDLE';      bg='rgba(0,255,136,0.09)'; }
+  else if (active < 3)                { col='var(--green)'; label='LOW';       bg='rgba(0,255,136,0.09)'; }
+  else if (active < OC_THRESHOLD)     { col='var(--amber)'; label='MODERATE';  bg='rgba(255,170,0,0.12)'; }
+  else                                { col='var(--red)';   label='OVERCROWD'; bg='rgba(255,51,85,0.14)'; }
+
+  if (bar)  { bar.style.width = pct + '%'; bar.style.background = col; }
+  if (stat) { stat.textContent = label; stat.style.color = col; stat.style.background = bg; }
+  if (row)  row.style.borderLeftColor = col;
+  if (ms)   { ms.textContent = label === 'IDLE' ? (isC1?'Cam1':'Cam2') : label; ms.style.color = col; }
+}
+
+/* ─────────────────────────────────────────────────
+   ENTRY FLOW (driven by Cam1 active)
+───────────────────────────────────────────────── */
+function updateEntryFlow(c1Active) {
+  const bar = document.getElementById('entry-flow-bar');
+  const lbl = document.getElementById('entry-flow-lbl');
+  if (!bar || !lbl) return;
+
+  let w, col, text;
+  if (c1Active === 0)                { w='0%';  col='#334';          text='—'; }
+  else if (c1Active < 3)             { w='22%'; col='var(--green)';  text='Low'; }
+  else if (c1Active < OC_THRESHOLD)  { w='55%'; col='var(--amber)';  text='Medium'; }
+  else                               { w='92%'; col='var(--red)';    text='High'; }
+
+  bar.style.width = w; bar.style.background = col;
+  lbl.textContent = text; lbl.style.color = col;
+}
+
+/* ─────────────────────────────────────────────────
+   SEND ACTION → inject "Alert Sent" into Alerts
+───────────────────────────────────────────────── */
+function sendAction(num, title, desc, priority) {
+  const item = document.getElementById('act-' + num);
+  if (!item || item.classList.contains('sent')) return;
+
+  /* Mark card as sent */
+  item.classList.add('sent');
+  item.onclick = null;
+  const anum = document.getElementById('anum-' + num);
+  const apri = document.getElementById('apri-' + num);
+  if (anum) { anum.textContent = '✓'; anum.classList.add('sent'); }
+  if (apri) { apri.textContent = 'SENT'; apri.className = 'action-pri pri-sent'; }
+
+  /* Inject blue "Alert Sent" card into Alerts panel */
+  injectAlert('sent','✅',
+    `Alert Sent — ${title}`,
+    `Dispatched: ${desc}`);
+
+  log(`Alert sent — "${title}" at ${nowTs()}`);
+}
+
+/* ─────────────────────────────────────────────────
+   CAM STATE HELPERS
+───────────────────────────────────────────────── */
+function setCamOnline(cam) {
+  document.getElementById(cam+'-livebadge').className = 'cam-live online';
+  document.getElementById(cam+'-dot').className       = 'live-dot online';
+  document.getElementById(cam+'-status').textContent  = 'LIVE';
+}
+function setCamComplete(cam) {
+  const s = document.getElementById(cam+'-status');
+  if (s) s.textContent = 'COMPLETE';
+}
+function setCamOffline(cam) {
+  document.getElementById(cam+'-livebadge').className = 'cam-live offline';
+  document.getElementById(cam+'-dot').className       = 'live-dot offline';
+  document.getElementById(cam+'-status').textContent  = 'OFFLINE';
+  const img = document.getElementById(cam+'-img');
+  if (img) img.style.display = 'none';
+  const ph = document.getElementById(cam+'-ph');
+  if (ph) ph.style.display = 'flex';
+  const rec = document.getElementById(cam+'-rec');
+  if (rec) rec.classList.remove('on');
+  const ot = document.getElementById(cam+'-octag');
+  if (ot) ot.classList.remove('on');
+}
+
+/* ─────────────────────────────────────────────────
+   UI STATE MACHINE
+───────────────────────────────────────────────── */
+function setUIState(state) {
+  uiState = state;
+  const badge = document.getElementById('status-badge');
+  const btn   = document.getElementById('start-btn');
+  const bIcon = btn.querySelector('.btn-icon');
+  const bLbl  = document.getElementById('start-btn-label');
+
+  if (state === 'idle') {
+    badge.textContent = '● IDLE'; badge.className = 'badge badge-idle';
+    btn.disabled = false; btn.classList.remove('running');
+    bIcon.textContent = '▶'; bLbl.textContent = 'START';
+    document.getElementById('progress-bar').style.width = '0%';
+    setCamOffline('cam1'); setCamOffline('cam2');
+  }
+  if (state === 'running') {
+    badge.textContent = '● LIVE'; badge.className = 'badge badge-live';
+    btn.disabled = true; btn.classList.add('running');
+    bIcon.textContent = '↻'; bLbl.textContent = 'RUNNING';
+    setCamOnline('cam1'); setCamOnline('cam2');
+
+    /* Wire up MJPEG streams */
+    ['cam1','cam2'].forEach(c => {
+      const img = document.getElementById(c+'-img');
+      img.src = `/stream/${c}?t=` + Date.now();
+      img.style.display = 'block';
+      document.getElementById(c+'-ph').style.display  = 'none';
+      document.getElementById(c+'-rec').classList.add('on');
+    });
+    log('Pipeline started — Cam1: Entrance | Cam2: Food Court');
+  }
+  if (state === 'done') {
+    badge.textContent = '✓ DONE'; badge.className = 'badge badge-done';
+    btn.disabled = false; btn.classList.remove('running');
+    bIcon.textContent = '↺'; bLbl.textContent = 'RESTART';
+    document.getElementById('progress-bar').style.width = '100%';
+    setCamComplete('cam1'); setCamComplete('cam2');
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   START PIPELINE
+───────────────────────────────────────────────── */
+async function startPipeline() {
+  if (uiState === 'running') return;
+
+  ['c1-active','c1-total','c1-matches','c1-unique',
+   'c2-active','c2-total','c2-matches','c2-unique',
+   's-unique','s-matches','s-cam1','s-cam2',
+   'sb-c1a','sb-c1t','sb-c2a','sb-c2t',
+   'map-c1','map-c2'].forEach(id => setVal(id, 0));
+
+  prevStats = {};
+  ocState   = { cam1: false, cam2: false };
+  ocInjected= { cam1: false, cam2: false };
+  setUIState('running');
+
+  try {
+    const res = await fetch('/api/start', { method:'POST' });
+    const d   = await res.json();
+    if (!d.ok) { log('Error: ' + (d.error||'cannot start')); setUIState('idle'); return; }
+  } catch(e) {
+    log('Cannot reach server — is Flask running?'); setUIState('idle'); return;
+  }
+
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollStats, 500);
+  pollStats();
+}
+
+/* ─────────────────────────────────────────────────
+   POLLING
+───────────────────────────────────────────────── */
+async function pollStats() {
+  try {
+    const res  = await fetch('/api/stats');
+    const data = await res.json();
+    const c1a  = data.cam1_active;
+    const c2a  = data.cam2_active;
+
+    /* Cam panels */
+    setVal('c1-active',  c1a);  setVal('c1-total',   data.cam1_total);
+    setVal('c1-matches', data.matches); setVal('c1-unique', data.unique);
+
+    setVal('c2-active',  c2a);  setVal('c2-total',   data.cam2_total);
+    setVal('c2-matches', data.matches); setVal('c2-unique', data.unique);
+
+    /* Stats panel */
+    setVal('s-unique', data.unique); setVal('s-matches', data.matches);
+    setVal('s-cam1', data.cam1_total); setVal('s-cam2', data.cam2_total);
+    setVal('sb-c1a', c1a); setVal('sb-c1t', data.cam1_total);
+    setVal('sb-c2a', c2a); setVal('sb-c2t', data.cam2_total);
+
+    /* Map counts */
+    setVal('map-c1', c1a); setVal('map-c2', c2a);
+
+    /* Zone bars */
+    updateZone('cam1', c1a);
+    updateZone('cam2', c2a);
+
+    /* Entry flow (Cam1 driven) */
+    updateEntryFlow(c1a);
+
+    /* Overcrowd checks */
+    handleOvercrowd('cam1', c1a);
+    handleOvercrowd('cam2', c2a);
+
+    /* Progress */
+    if (!data.pipeline_done) {
+      const done = (data.cam1_done?1:0) + (data.cam2_done?1:0);
+      document.getElementById('progress-bar').style.width = `${done*40+10}%`;
+    }
+    if (data.cam1_done) setCamComplete('cam1');
+    if (data.cam2_done) setCamComplete('cam2');
+
+    /* Log */
+    if (data.cam1_total !== prevStats.cam1_total)
+      log(`Entrance › Person #${data.cam1_total} active:${c1a} | Matches:${data.matches} | Unique:${data.unique}`);
+    else if (data.cam2_total !== prevStats.cam2_total)
+      log(`FoodCourt › Person #${data.cam2_total} active:${c2a} | Matches:${data.matches} | Unique:${data.unique}`);
+    else if (uiState==='running')
+      log(`Processing… Entrance:${data.cam1_total} FoodCourt:${data.cam2_total} Matches:${data.matches} Unique:${data.unique}`);
+
+    prevStats = {...data};
+
+    if (data.pipeline_done && uiState !== 'done') {
+      setUIState('done');
+      clearInterval(pollTimer);
+      log(`✓ Done — Entrance:${data.cam1_total} | FoodCourt:${data.cam2_total} | Matches:${data.matches} | Unique:${data.unique}`);
+    }
+  } catch(e) { log('Polling error — retrying…'); }
+}
+
+/* ─────────────────────────────────────────────────
+   MJPEG AUTO-RECONNECT
+───────────────────────────────────────────────── */
+['cam1-img','cam2-img'].forEach(id => {
+  const img = document.getElementById(id);
+  if (!img) return;
+  img.addEventListener('error', () => {
+    if (uiState === 'running')
+      setTimeout(() => { img.src = img.src.split('?')[0] + '?t=' + Date.now(); }, 2000);
+  });
+});
+</script>
+</body>
+</html>
