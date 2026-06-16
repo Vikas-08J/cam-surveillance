@@ -10,6 +10,7 @@ from PIL import Image
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import threading
 import torchreid
+import time
 
 # ==============================
 # GLOBALS
@@ -23,6 +24,13 @@ pipeline_done     = False
 pipeline_running  = False   # NEW: True only while actively processing
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+
+# ==============================
+# DROIDCAM CONFIGURATION
+# ==============================
+# Change these to your phone's IP address (e.g., "http://192.168.1.10:4747/video")
+# If not using a second DroidCam, leave it as an empty string or dummy URL.
+DROIDCAM_URL_1="http://10.178.123.65:4747/video"
 
 os.makedirs(os.path.join(BASE, "static/outputs"), exist_ok=True)
 os.makedirs(os.path.join(BASE, "static/extracted/cam1"), exist_ok=True)
@@ -196,13 +204,32 @@ def cluster_features(data, threshold=0.25):
 REID_THRESHOLD = 0.25
 
 
-def process_camera(video_path, cam, tracker, detector):
+def process_camera(cap, cam, tracker, detector):
     global latest_frame_cam1, latest_frame_cam2
 
-    cap = cv2.VideoCapture(video_path)
-    width  = int(cap.get(3))
-    height = int(cap.get(4))
-    fps    = int(cap.get(5))
+    if not cap.isOpened():
+        print(f"{cam} failed to open")
+        return [],0
+
+
+    print(f"{cam} connected")
+
+
+    ret, frame = cap.read()
+
+    if not ret:
+        print(f"{cam} cannot receive frames")
+        cap.release()
+        return [],0
+
+
+    height, width = frame.shape[:2]
+
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps<=0:
+        fps=30
+ 
 
     out = cv2.VideoWriter(
         os.path.join(BASE, f"static/outputs/{cam}.mp4"),
@@ -403,6 +430,32 @@ def process_camera(video_path, cam, tracker, detector):
     return list(track_features.values()), len(seen_ids)
 
 
+def open_camera(source):
+    if not source:
+        return None
+
+    cap = cv2.VideoCapture(
+        source,
+        cv2.CAP_FFMPEG
+    )
+
+    if not cap.isOpened():
+        print(f"Failed to open source: {source}")
+        return None
+
+
+    ret, frame = cap.read()
+
+    if not ret:
+        print(f"Source opened but no frames received: {source}")
+        cap.release()
+        return None
+
+
+    print(f"Camera connected: {source}")
+
+    return cap
+
 # ==============================
 # MAIN PIPELINE
 # ==============================
@@ -432,21 +485,88 @@ def run_pipeline():
     tracker1 = DeepSort(**tracker_cfg)
     tracker2 = DeepSort(**tracker_cfg)
 
-    cam1_path = os.path.join(BASE, "inputs/cam1.mp4")
-    cam2_path = os.path.join(BASE, "inputs/cam2.mp4")
+    # Decide camera sources before starting
+    v1_file = os.path.join(BASE, "inputs/cam1.mp4")
+    v2_file = os.path.join(BASE, "inputs/cam2.mp4")
+    print("\n[SYSTEM] Opening cameras...")
 
+
+    DROIDCAM_URL_1 = "http://10.178.123.65:4747/video"
+
+
+    cam1_cap = open_camera(DROIDCAM_URL_1)
+
+
+    if cam1_cap is not None:
+
+        print(
+        f"✅ DroidCam detected at {DROIDCAM_URL_1}. "
+        "Using live stream."
+    )
+
+    else:
+
+        print(
+        "❌ DroidCam unavailable. "
+        "Using recorded cam1.mp4"
+    )
+
+        cam1_cap = open_camera(v1_file)
+
+
+
+# Camera 2
+
+    DROIDCAM_URL_2 = 0
+
+
+    cam2_cap = open_camera(DROIDCAM_URL_2)
+
+
+    if cam2_cap is not None:
+
+        print(
+        "✅ Webcam detected. "
+        "Using live stream."
+    )
+
+    else:
+
+        print(
+        "❌ Webcam unavailable. "
+        "Using recorded cam2.mp4"
+    )
+
+        cam2_cap = open_camera(v2_file)
     result = {}
 
     def cam1():
-        result['cam1'] = process_camera(cam1_path, "cam1", tracker1, detector1)
+
+        result['cam1'] = process_camera(
+        cam1_cap,
+        "cam1",
+        tracker1,
+        detector1
+    )
+
 
     def cam2():
-        result['cam2'] = process_camera(cam2_path, "cam2", tracker2, detector2)
+
+        result['cam2'] = process_camera(
+        cam2_cap,
+        "cam2",
+        tracker2,
+        detector2
+    )
 
     t1 = threading.Thread(target=cam1)
     t2 = threading.Thread(target=cam2)
     t1.start(); t2.start()
     t1.join();  t2.join()
+    if cam1_cap:
+        cam1_cap.release()
+    if cam2_cap:
+        cam2_cap.release()
 
     # Final definitive cross-cam match after both cameras finish
     with cross_cam_lock:
